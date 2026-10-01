@@ -1,9 +1,9 @@
 --[[
     ╔══════════════════════════════════════════════════════════════════════╗
     ║  Ouroboros Loader — Final                                           ║
-    ║  • fixes: dup CreatorIds, broken extensions, silent errors          ║
-    ║  • CDN fallback, BOM strip, HTML-error detect, retry loop           ║
-    ║  • fishing boost: env-bias RNG + wait speedup + remote spam + tp    ║
+    ║  • dedup CreatorIds, extension fixes, CDN fallback, retry loop      ║
+    ║  • fishing boost: env-bias + wait-speedup + remote spam + tp        ║
+    ║  • auto-minigame: mouse/touch/space spam + GUI watcher burst        ║
     ╚══════════════════════════════════════════════════════════════════════╝
 ]]
 
@@ -21,24 +21,12 @@ local MIRROR = 'https://cdn.jsdelivr.net/gh/joustingmatch/Ouroboros@main/games/'
 local USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 
 local FISHING = {
-    [654102831]  = true, -- bomb-fishing
-    [949718515]  = true, -- fishingrivers
-    [32032540]   = true, -- heavyweightfishing
-    [15707680]   = true, -- fishperclick
-    [35620138]   = true, -- fishanimrng
-    [612510500]  = true, -- holefishing
-    [34744238]   = true, -- deepfishing
-    [1012569219] = true, -- mogfishing
-    [1041268469] = true, -- pussyfishing
-    [4843918]    = true, -- farmafish
-    [492855504]  = true, -- crawfishing
-    [592785028]  = true, -- fishforjunk
-    [984941738]  = true, -- fisheggs
-    [73354146]   = true, -- beafishbait
-    [645675002]  = true, -- pullaluckyfish
-    [295349008]  = true, -- lakesipping
-    [51129361]   = true, -- scale-slimy-fish
-    [949888772]  = true, -- myseafood
+    [654102831]  = true, [949718515]  = true, [32032540]   = true,
+    [15707680]   = true, [35620138]   = true, [612510500]  = true,
+    [34744238]   = true, [1012569219] = true, [1041268469] = true,
+    [4843918]    = true, [492855504]  = true, [592785028]  = true,
+    [984941738]  = true, [73354146]   = true, [645675002]  = true,
+    [295349008]  = true, [51129361]   = true, [949888772]  = true,
 }
 
 -- ═══════════════════════════════════════════════════════════════════════
@@ -600,13 +588,14 @@ local FishingBoost
 if isFishingPre then
     FishingBoost = {}
     FishingBoost.CFG = {
-        biasRoll    = true,
-        speedWaits  = true,
-        spamCast    = true,
-        castRate    = 0.03,
-        teleport    = true,
-        logRemotes  = true,
-        biasFloor   = 0.90,
+        biasRoll      = true,
+        speedWaits    = true,
+        spamCast      = true,
+        castRate      = 0.03,
+        teleport      = true,
+        logRemotes    = true,
+        biasFloor     = 0.90,
+        autoMinigame  = true,
     }
     FishingBoost.castCount = 0
     FishingBoost.spamAlive = false
@@ -682,6 +671,95 @@ if isFishingPre then
                 end
             end)
         end
+    end
+
+    -- ── auto-complete minigame (mouse + touch + space spam) ───────────
+    function FishingBoost.startAutoMinigame()
+        local VirtualUser = game:GetService("VirtualUser")
+
+        -- mouse1 spam
+        task.spawn(function()
+            while FishingBoost.spamAlive do
+                pcall(function()
+                    VirtualUser:CaptureController()
+                    VirtualUser:ClickButton1(Vector2.new(0.5, 0.5))
+                end)
+                task.wait(0.016)
+            end
+        end)
+
+        -- touch tap
+        task.spawn(function()
+            while FishingBoost.spamAlive do
+                pcall(function()
+                    VirtualUser:CaptureController()
+                    VirtualUser:ClickButton2(Vector2.new(0.5, 0.5))
+                end)
+                task.wait(0.05)
+            end
+        end)
+
+        -- space via VirtualInputManager
+        pcall(function()
+            local VIM = game:GetService("VirtualInputManager")
+            task.spawn(function()
+                while FishingBoost.spamAlive do
+                    pcall(function()
+                        VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+                        task.wait(0.02)
+                        VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+                    end)
+                    task.wait(0.02)
+                end
+            end)
+        end)
+    end
+
+    -- ── GUI watcher — burst saat minigame muncul ──────────────────────
+    function FishingBoost.watchMinigame()
+        local patterns = {
+            "minigame", "mini_game", "reel", "catch", "timing",
+            "bar", "progress", "fishbar", "tension", "struggle",
+            "fight", "green", "zone", "meter"
+        }
+
+        local function looksLikeMinigame(obj)
+            if not obj:IsA("GuiObject") then return false end
+            local n = obj.Name:lower()
+            for _, p in ipairs(patterns) do
+                if n:find(p, 1, true) then return true end
+            end
+            return false
+        end
+
+        local lastDetect = 0
+
+        local function onDescendantAdded(desc)
+            if not looksLikeMinigame(desc) then return end
+            if os.clock() - lastDetect < 0.2 then return end
+            lastDetect = os.clock()
+            FishingBoost.castCount = FishingBoost.castCount + 1
+
+            task.spawn(function()
+                local vu = game:GetService("VirtualUser")
+                for i = 1, 20 do
+                    pcall(function()
+                        vu:CaptureController()
+                        vu:ClickButton1(Vector2.new(0.5, 0.5))
+                    end)
+                    task.wait(0.015)
+                end
+            end)
+        end
+
+        task.spawn(function()
+            local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+            PlayerGui.DescendantAdded:Connect(onDescendantAdded)
+            pcall(function()
+                local CoreGui = game:GetService("CoreGui")
+                CoreGui.DescendantAdded:Connect(onDescendantAdded)
+            end)
+        end)
     end
 
     function FishingBoost.findWater()
@@ -767,6 +845,10 @@ if isFishingPre then
         end
         if FishingBoost.CFG.spamCast and #remotes > 0 then
             FishingBoost.startSpam(remotes)
+        end
+        if FishingBoost.CFG.autoMinigame then
+            FishingBoost.startAutoMinigame()
+            FishingBoost.watchMinigame()
         end
         FishingBoost.installHUD()
     end
